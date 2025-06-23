@@ -31,4 +31,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 [unreleased]: https://github.com/fimholz/hassio-addons/tree/main/addon-icecast
-[0.0.1-alpha]: https://github.com/fimholz/hassio-addons/tree/0.1.1-alpha/addon-icecast
+[0.0.1-alpha]: https://github.com/fimholz/hassio-addons/tree/0.0.1-alpha/addon-icecast
