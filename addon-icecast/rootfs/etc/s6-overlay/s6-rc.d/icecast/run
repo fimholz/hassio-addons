@@ -1,0 +1,10 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community Add-on: Icecast
+# Runs icecast script
+# ==============================================================================
+
+bashio::log.info "Starting Icecast..."
+
+exec /usr/bin/icecast.sh

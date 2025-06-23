@@ -1,0 +1,457 @@
+#!/bin/bash
+
+# xmledit - Cross-platform XML editing script
+# Works on Alpine, Debian, and Arch Linux
+# Requires: xmlstarlet (auto-installed if missing)
+
+set -euo pipefail
+
+# Script metadata
+SCRIPT_NAME="xmledit"
+SCRIPT_VERSION="1.0.0"
+SCRIPT_AUTHOR="Manus AI"
+
+# Global variables
+VERBOSE=false
+CREATE_BACKUP=false
+DRY_RUN=false
+INSTALL_DEPS=false
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Logging functions
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_verbose() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo -e "${BLUE}[VERBOSE]${NC} $1" >&2
+    fi
+}
+
+# Help function
+show_help() {
+    cat << EOF
+$SCRIPT_NAME v$SCRIPT_VERSION - Cross-platform XML editing script
+
+USAGE:
+    $SCRIPT_NAME [OPTIONS] OPERATION FILE [ARGS...]
+
+OPERATIONS:
+    select FILE XPATH              Query/select XML elements
+    update FILE XPATH VALUE        Update element values or attributes
+    insert FILE PARENT_XPATH TYPE NAME [VALUE]
+                                  Insert new elements or attributes
+                                  TYPE: element, attribute
+    delete FILE XPATH             Remove elements or attributes
+    validate FILE                 Validate XML structure
+    format FILE                   Format/pretty-print XML
+
+OPTIONS:
+    -h, --help                    Show this help message
+    -v, --verbose                 Enable verbose output
+    -b, --backup                  Create backup before editing
+    -i, --install-deps            Install dependencies if missing
+    --dry-run                     Show what would be changed without modifying
+
+EXAMPLES:
+    # Update element value
+    $SCRIPT_NAME update config.xml "//database/host" "localhost"
+    
+    # Update attribute
+    $SCRIPT_NAME update config.xml "//server/@port" "8080"
+    
+    # Insert new element
+    $SCRIPT_NAME insert config.xml "//config" element "new-setting" "value"
+    
+    # Insert new attribute
+    $SCRIPT_NAME insert config.xml "//server" attribute "timeout" "30"
+    
+    # Delete element
+    $SCRIPT_NAME delete config.xml "//old-setting"
+    
+    # Validate XML
+    $SCRIPT_NAME validate config.xml
+    
+    # Format XML
+    $SCRIPT_NAME format config.xml
+
+SUPPORTED DISTRIBUTIONS:
+    - Alpine Linux (apk)
+    - Debian/Ubuntu (apt)
+    - Arch Linux (pacman)
+
+EOF
+}
+
+# Distribution detection
+detect_distribution() {
+    if [[ -f /etc/alpine-release ]]; then
+        echo "alpine"
+    elif [[ -f /etc/debian_version ]]; then
+        echo "debian"
+    elif [[ -f /etc/arch-release ]]; then
+        echo "arch"
+    else
+        echo "unknown"
+    fi
+}
+
+# Check if xmlstarlet is installed
+check_xmlstarlet() {
+    if command -v xmlstarlet >/dev/null 2>&1; then
+        log_verbose "xmlstarlet is already installed"
+        return 0
+    else
+        log_verbose "xmlstarlet is not installed"
+        return 1
+    fi
+}
+
+# Install xmlstarlet based on distribution
+install_xmlstarlet() {
+    local distro
+    distro=$(detect_distribution)
+    
+    log_info "Attempting to install xmlstarlet on $distro..."
+    
+    case "$distro" in
+        alpine)
+            if command -v apk >/dev/null 2>&1; then
+                sudo apk add --no-cache xmlstarlet
+            else
+                log_error "apk package manager not found"
+                return 1
+            fi
+            ;;
+        debian)
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update && sudo apt-get install -y xmlstarlet
+            else
+                log_error "apt-get package manager not found"
+                return 1
+            fi
+            ;;
+        arch)
+            if command -v pacman >/dev/null 2>&1; then
+                sudo pacman -S --noconfirm xmlstarlet
+            else
+                log_error "pacman package manager not found"
+                return 1
+            fi
+            ;;
+        *)
+            log_error "Unsupported distribution: $distro"
+            log_error "Please install xmlstarlet manually:"
+            log_error "  Alpine: apk add xmlstarlet"
+            log_error "  Debian/Ubuntu: apt-get install xmlstarlet"
+            log_error "  Arch: pacman -S xmlstarlet"
+            return 1
+            ;;
+    esac
+    
+    if check_xmlstarlet; then
+        log_success "xmlstarlet installed successfully"
+        return 0
+    else
+        log_error "Failed to install xmlstarlet"
+        return 1
+    fi
+}
+
+# Ensure xmlstarlet is available
+ensure_xmlstarlet() {
+    if ! check_xmlstarlet; then
+        if [[ "$INSTALL_DEPS" == "true" ]]; then
+            install_xmlstarlet
+        else
+            log_error "xmlstarlet is required but not installed"
+            log_error "Use --install-deps to automatically install, or install manually:"
+            local distro
+            distro=$(detect_distribution)
+            case "$distro" in
+                alpine) log_error "  apk add xmlstarlet" ;;
+                debian) log_error "  apt-get install xmlstarlet" ;;
+                arch) log_error "  pacman -S xmlstarlet" ;;
+                *) log_error "  Install xmlstarlet using your package manager" ;;
+            esac
+            exit 1
+        fi
+    fi
+}
+
+# Validate XML file
+validate_xml_file() {
+    local file="$1"
+    
+    if [[ ! -f "$file" ]]; then
+        log_error "File not found: $file"
+        return 1
+    fi
+    
+    if [[ ! -r "$file" ]]; then
+        log_error "File not readable: $file"
+        return 1
+    fi
+    
+    # Check if file is valid XML
+    if ! xmlstarlet val "$file" >/dev/null 2>&1; then
+        log_error "Invalid XML file: $file"
+        return 1
+    fi
+    
+    log_verbose "XML file validation passed: $file"
+    return 0
+}
+
+# Create backup
+create_backup() {
+    local file="$1"
+    local backup_file="${file}.backup.$(date +%Y%m%d_%H%M%S)"
+    
+    if [[ "$CREATE_BACKUP" == "true" ]]; then
+        log_verbose "Creating backup: $backup_file"
+        cp "$file" "$backup_file"
+        log_success "Backup created: $backup_file"
+    fi
+}
+
+# XML operations
+xml_select() {
+    local file="$1"
+    local xpath="$2"
+    
+    log_verbose "Selecting from $file with XPath: $xpath"
+    xmlstarlet sel -t -v "$xpath" "$file"
+}
+
+xml_update() {
+    local file="$1"
+    local xpath="$2"
+    local value="$3"
+    
+    log_verbose "Updating $file: $xpath = $value"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "DRY RUN: Would update $xpath to '$value' in $file"
+        return 0
+    fi
+    
+    create_backup "$file"
+    xmlstarlet ed -L -u "$xpath" -v "$value" "$file"
+    log_success "Updated $xpath in $file"
+}
+
+xml_insert() {
+    local file="$1"
+    local parent_xpath="$2"
+    local type="$3"
+    local name="$4"
+    local value="${5:-}"
+    
+    log_verbose "Inserting $type '$name' into $file at $parent_xpath"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "DRY RUN: Would insert $type '$name' with value '$value' at $parent_xpath in $file"
+        return 0
+    fi
+    
+    create_backup "$file"
+    
+    case "$type" in
+        element)
+            if [[ -n "$value" ]]; then
+                xmlstarlet ed -L -s "$parent_xpath" -t elem -n "$name" -v "$value" "$file"
+            else
+                xmlstarlet ed -L -s "$parent_xpath" -t elem -n "$name" "$file"
+            fi
+            ;;
+        attribute)
+            xmlstarlet ed -L -i "$parent_xpath" -t attr -n "$name" -v "$value" "$file"
+            ;;
+        *)
+            log_error "Invalid insert type: $type (must be 'element' or 'attribute')"
+            return 1
+            ;;
+    esac
+    
+    log_success "Inserted $type '$name' in $file"
+}
+
+xml_delete() {
+    local file="$1"
+    local xpath="$2"
+    
+    log_verbose "Deleting from $file: $xpath"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "DRY RUN: Would delete $xpath from $file"
+        return 0
+    fi
+    
+    create_backup "$file"
+    xmlstarlet ed -L -d "$xpath" "$file"
+    log_success "Deleted $xpath from $file"
+}
+
+xml_validate() {
+    local file="$1"
+    
+    log_verbose "Validating XML file: $file"
+    
+    if xmlstarlet val "$file"; then
+        log_success "XML file is valid: $file"
+        return 0
+    else
+        log_error "XML file is invalid: $file"
+        return 1
+    fi
+}
+
+xml_format() {
+    local file="$1"
+    
+    log_verbose "Formatting XML file: $file"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "DRY RUN: Would format $file"
+        xmlstarlet fo "$file"
+        return 0
+    fi
+    
+    create_backup "$file"
+    xmlstarlet fo "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+    log_success "Formatted XML file: $file"
+}
+
+# Parse command line arguments
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -b|--backup)
+                CREATE_BACKUP=true
+                shift
+                ;;
+            -i|--install-deps)
+                INSTALL_DEPS=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
+    # Store remaining arguments
+    OPERATION="$1"
+    shift
+    ARGS=("$@")
+}
+
+# Main function
+main() {
+    if [[ $# -eq 0 ]]; then
+        show_help
+        exit 1
+    fi
+    
+    parse_arguments "$@"
+    
+    # Ensure xmlstarlet is available
+    ensure_xmlstarlet
+    
+    # Execute operation
+    case "$OPERATION" in
+        select)
+            if [[ ${#ARGS[@]} -lt 2 ]]; then
+                log_error "select operation requires FILE and XPATH arguments"
+                exit 1
+            fi
+            validate_xml_file "${ARGS[0]}"
+            xml_select "${ARGS[0]}" "${ARGS[1]}"
+            ;;
+        update)
+            if [[ ${#ARGS[@]} -lt 3 ]]; then
+                log_error "update operation requires FILE, XPATH, and VALUE arguments"
+                exit 1
+            fi
+            validate_xml_file "${ARGS[0]}"
+            xml_update "${ARGS[0]}" "${ARGS[1]}" "${ARGS[2]}"
+            ;;
+        insert)
+            if [[ ${#ARGS[@]} -lt 4 ]]; then
+                log_error "insert operation requires FILE, PARENT_XPATH, TYPE, and NAME arguments"
+                exit 1
+            fi
+            validate_xml_file "${ARGS[0]}"
+            xml_insert "${ARGS[0]}" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}" "${ARGS[4]:-}"
+            ;;
+        delete)
+            if [[ ${#ARGS[@]} -lt 2 ]]; then
+                log_error "delete operation requires FILE and XPATH arguments"
+                exit 1
+            fi
+            validate_xml_file "${ARGS[0]}"
+            xml_delete "${ARGS[0]}" "${ARGS[1]}"
+            ;;
+        validate)
+            if [[ ${#ARGS[@]} -lt 1 ]]; then
+                log_error "validate operation requires FILE argument"
+                exit 1
+            fi
+            xml_validate "${ARGS[0]}"
+            ;;
+        format)
+            if [[ ${#ARGS[@]} -lt 1 ]]; then
+                log_error "format operation requires FILE argument"
+                exit 1
+            fi
+            validate_xml_file "${ARGS[0]}"
+            xml_format "${ARGS[0]}"
+            ;;
+        *)
+            log_error "Unknown operation: $OPERATION"
+            log_error "Valid operations: select, update, insert, delete, validate, format"
+            exit 1
+            ;;
+    esac
+}
+
+# Run main function with all arguments
+main "$@"
+

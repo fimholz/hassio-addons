@@ -1,0 +1,30 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community Add-on: Icecast
+# Icecast init script, runs before any other service
+# ==============================================================================
+
+SAMPLE_CONFIG="/etc/icecast.xml"
+DEST_CONFIG="/config/icecast.xml"
+
+# Check if the destination config file already exists
+if [ ! -f "${DEST_CONFIG}" ]; then
+    bashio::log.warning "No existing config found. Copying sample config from ${SAMPLE_CONFIG} to ${DEST_CONFIG}."
+    cp "${SAMPLE_CONFIG}" "${DEST_CONFIG}"
+    # Optional: Set appropriate permissions if needed
+    chmod 644 "${DEST_CONFIG}"
+
+    # log to stdout
+    /usr/bin/xmledit update "${DEST_CONFIG}" "//logging/accesslog" "-"
+    /usr/bin/xmledit update "${DEST_CONFIG}" "//logging/errorlog" "-"
+    # container runs as root and icecast throws an error if owner is not changed
+    /usr/bin/xmledit update "${DEST_CONFIG}" "//security/changeowner/user" "nobody"
+    /usr/bin/xmledit update "${DEST_CONFIG}" "//security/changeowner/group" "nogroup"
+    # insert charset to mountpoint's default
+    /usr/bin/xmledit insert "${DEST_CONFIG}" "//icecast" element "mount"
+    /usr/bin/xmledit insert "${DEST_CONFIG}" "//mount" attribute "type" "default"
+    /usr/bin/xmledit insert "${DEST_CONFIG}" "//mount" element "charset" "UTF-8"
+else
+    bashio::log.info "Config file already exists at ${DEST_CONFIG}. Skipping creation of modified sample."
+fi

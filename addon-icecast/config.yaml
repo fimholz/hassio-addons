@@ -1,0 +1,38 @@
+---
+name: Icecast
+version: 0.0.1-alpha
+stage: experimental
+slug: icecast
+description: Create an Internet radio station or a privately running jukebox and many things in between
+url: https://icecast.org/
+ingress: true
+ingress_port: 8000
+ingress_stream: true
+webui: http://[HOST]:[PORT:8000]
+panel_icon: mdi:radio-tower
+startup: application
+init: false
+arch:
+  - amd64
+ports:
+  8000/tcp: null
+map:
+  - addon_config:rw
+options:
+  location: "Homelab"
+  admin: "icemaster@homeassistant"
+  hostname: "homeassistant.local:8123"
+  loglevel: 3
+  source_password: "hackme"
+  relay_password: "hackme"
+  admin_user: "admin"
+  admin_password: "hackme"
+schema:
+  location: "str"
+  admin: "str"
+  hostname: "str"
+  loglevel: "int(1,4)" #list(Error|Warn|Info|Debug)
+  source_password: "str"
+  relay_password: "str"
+  admin_user: "str"
+  admin_password: "password"
